@@ -1,0 +1,89 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage{stmaryrd}
+\usepackage{graphicx}
+\usepackage{amsfonts}
+\usepackage{amsmath,amsthm}
+\usepackage{amssymb}
+\usepackage{mathrsfs}
+\usepackage{indentfirst}
+\usepackage{titlesec}
+\usepackage{caption2}
+\usepackage{color}
+\usepackage[normalem]{ulem}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{lineno}
+\numberwithin{equation}{section}
+
+\usepackage[english]{babel}
+\usepackage{cite}
+\usepackage{bbm}
+
+%\usepackage[colorlinks, linkcolor=blue]{hyperref}
+\usepackage[hypertexnames=false]{hyperref}
+%\usepackage[notref,notcite]{showkeys}
+
+\renewcommand{\baselinestretch}{1.2}
+
+\topmargin 0cm \oddsidemargin 0.66cm \evensidemargin 0.66cm
+\textwidth 14.66cm \textheight 22.23cm
+
+\parindent 5ex
+
+\providecommand{\bwd}{\leftarrow}
+\providecommand{\fwd}{\rightarrow}
+\renewcommand{\abstractname}{Abstract}
+\renewcommand{\figurename}{Fig.}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{problem}{Problem}
+\newtheorem{definition}{Definition}
+\newtheorem{condition}{Condition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{remark}{Remark}
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{corollary}{Corollary}[section]
+\newtheorem{example}{Example}[section]
+
+%\numberwithin{equation}{section}
+
+%below only needed in Ubuntu 16.04 when using TexStudio, should remove at WinEdt
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd{\ttlh@hang}{\parindent\z@}{\parindent\z@\leavevmode}{}{}
+\patchcmd{\ttlh@hang}{\noindent}{}{}{}
+\makeatother
+%above only needed in Ubuntu 16.04 when using TexStudio, should remove at WinEdt
+
+\usepackage{macros-Wenqing}
+
+\begin{document}
+
+\begin{center}
+\textbf{Note on \verb~gpt.py~ computational workflow.}
+\end{center}
+
+$\bullet$ RMS norm: normalization of token's embedding vector $\boldx \in  \R^d$. This is different from transformer paper's LayerNorm.
+
+$$\text{RMS Norm}(\boldx)=\dfrac{\boldx}{\text{RMS}(\boldx)+\ve} \ , \ \text{RMS}(\boldx)=\sqrt{\sum\li_{i=1}^d x_i^2} \ , \ \boldx = (x_1,...,x_d) \ , \ \ve>0 \ .$$
+
+\
+
+$\bullet$ Rotary Positional Embedding (RoPE): positional embedding using $\sin$, $\cos$ positional tensors. This is different from transformer paper's Positional Embedding.
+
+Input $x$ with shape $(B, T, H, D)$ where  $B=$batch size, $T=$sequence length, $H=$number of heads in multi-head attention, $D=$dimension of each head (must be even). Let $\sin=(\sin^{t,i})_{0\leq t \leq T-1, 0\leq i\leq D/2}$, $\cos=(\cos^{t,i})_{0\leq t \leq T-1, 0\leq i\leq D/2}$ be tensors each with shape $(1,T,1,D/2)$. Then for each batch $b$, each index $t\in \{0,...,T-1\}$, each head $h$, RoPE does the following:
+$$(x^{b,t,h,0},...,x^{b,t,h,D-1}) \ra \left\{\begin{array}{ll}
+\cos^{t,i}x^{b,t,h,i} + \sin^{t,i}x^{b,t,h,i+D/2} & \text{ for } 0\leq i \leq D/2-1 \ ,
+\\
+-\sin^{t,i-D/2}x^{b,t,h,i-D/2} + \cos^{t,i-D/2}x^{b,t,h,i} & \text{ for } D/2\leq i \leq D-1 \ .
+\end{array}\right.$$
+Position information, originally in $t$, is encoded in such rotation via $\cos, \sin$. Usually we take $\cos^{t,i}=\cos \left(\dfrac{t}{10000^{2i/D}}\right)$ and $\sin^{t,i}=\sin \left(\dfrac{t}{10000^{2i/D}}\right)$.
+
+\
+
+$\bullet$ Causal Self-Attention. The self-attention module with specific causal mask construction.
+
+--  
+
+\end{document}
