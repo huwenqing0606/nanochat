@@ -66,7 +66,7 @@
 
 $\bullet$ RMS norm: normalization of token's embedding vector $\boldx \in  \R^d$. This is different from transformer paper's LayerNorm.
 
-$$\text{RMS Norm}(\boldx)=\dfrac{\boldx}{\text{RMS}(\boldx)+\ve} \ , \ \text{RMS}(\boldx)=\sqrt{\sum\li_{i=1}^d x_i^2} \ , \ \boldx = (x_1,...,x_d) \ , \ \ve>0 \ .$$
+$$\text{RMSNorm}(\boldx)=\dfrac{\boldx}{\text{RMS}(\boldx)+\ve} \ , \ \text{RMS}(\boldx)=\sqrt{\sum\li_{i=1}^d x_i^2} \ , \ \boldx = (x_1,...,x_d) \ , \ \ve>0 \ .$$
 
 \
 
@@ -84,6 +84,13 @@ Position information, originally in $t$, is encoded in such rotation via $\cos, 
 
 $\bullet$ Causal Self-Attention. The self-attention module with specific causal mask construction.
 
---  
+-- Number of kv heads $\text{n\_kv\_head}$ $|$ number of heads $\text{n\_head}$. 
+
+-- self-attention. Input $x$ has shape $(B,T,\_)$, then $Q, K, V$ are from input $x$, i.e., $Q=W_Q^T X$ etc. They are re-shaped into shape $(B,T, \text{n\_head}, \text{head\_dim})$ for $Q$ and $(B,T, \text{n\_kv\_head}, \text{head\_dim})$ for $K, V$, respectively. 
+Then apply RoPE to $Q,K$, apply RMSNorm to $Q,K$, finally apply $(1,2)$ transpose $(B,T,H,D)\ra (B,H,T,D)$ to $Q,K,V$;
+
+-- kv-cache and masked causal attention. 
+
+-- final projection.
 
 \end{document}
