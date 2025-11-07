@@ -84,13 +84,46 @@ Position information, originally in $t$, is encoded in such rotation via $\cos, 
 
 $\bullet$ Causal Self-Attention. The self-attention module with specific causal mask construction.
 
--- Number of kv heads $\text{n\_kv\_head}$ $|$ number of heads $\text{n\_head}$. 
+-- number of heads $\verb#n_head#$ $\%$ number of kv heads $\verb#n_kv_head#$ $=0$. 
 
--- self-attention. Input $x$ has shape $(B,T,\_)$, then $Q, K, V$ are from input $x$, i.e., $Q=W_Q^T X$ etc. They are re-shaped into shape $(B,T, \text{n\_head}, \text{head\_dim})$ for $Q$ and $(B,T, \text{n\_kv\_head}, \text{head\_dim})$ for $K, V$, respectively. 
-Then apply RoPE to $Q,K$, apply RMSNorm to $Q,K$, finally apply $(1,2)$ transpose $(B,T,H,D)\ra (B,H,T,D)$ to $Q,K,V$;
+-- self-attention. Input $x$ has shape $(B,T,\verb#_#)$, which stands for the current forward pass. Then $Q, K, V$ are from input $x$, i.e., $Q=W_Q^T X$ etc. They are re-shaped into shape $(B,T, \verb#n_head#, \verb#head_dim#)$ for $Q$ and $(B,T, \verb#n_kv_head#, \verb#head_dim#)$ for $K, V$, respectively. 
+Then apply RoPE to $Q,K$, apply RMSNorm to $Q,K$, finally apply $(1,2)$ transpose $(B,T,H,D)\ra (B,H,T,D)$ to $Q,K,V$, i.e., make head be batch dim, so that we can parallel process each attention head to the full batch;
 
--- kv-cache and masked causal attention. 
+-- kv-cache and multi-query-attention. $T$ in $(B,H,T,D)$ stands for the number of queries. For $Q$, use number of queries in this forward pass $=T_q$; for $K,V$, after kv-cache, use number of queries in the cache $+$ current forward pass $=T_q+(T_k)_{\text{prev}}=T_k$.
 
--- final projection.
+PyTorch 2.0's \verb`scaled_product_attention`: 
 
+\begin{verbatim}
+def scaled_dot_product_attention(
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    attn_mask: Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    scale: float | None = None,
+    enable_gqa: bool = False,
+) -> Tensor: ...
+\end{verbatim}
+
+Multi-Query-Attention (Group-Query-Attention, gqa): 
+
+\verb#enable_gqa = self.n_head != self.n_kv_head#:
+multiple query heads use the same key/value head, or in other words duplicately use key/value head for a chunk of query heads. This saves computation. Example: \verb#n_head#$=16$, \verb#n_kv_head#$=4$, then each group of $4$ query heads share the same kv head, or the same kv head repeatedly used $4$ times for each chunk of $4$ query heads. 
+
+Mask construction in multi-query-attention: Discuss the following cases
+\begin{itemize}
+\item[(1)] Inference with no increment, i.e. infer the whole sequence at once ($T_q=T_k$) or training (kv cache is empty): Auto regressive case. Each query only attends keys/values before it. Use standard causal mask. See Figure \ref{Fig:MQAmasks} left. 
+\item[(2)] $T_q=1$, inference with single query in this forward pass. Each query attends all the keys/values in the cache. No mask needed. See Figure \ref{Fig:MQAmasks} middle.
+\item[(3)] Not (1) or (2): $1<T_q<T_k$. Inference with a chunk of $T_q$ queries in this forward pass. Each query attends all the keys/values in the old kv cache $(T_k)_\text{prev}=T_k-T_q$, but for the newly added $T_q$ items of kv, i.e. within the chunk we use causal attention so that each query only attends keys/values before it. See Figure \ref{Fig:MQAmasks} right.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[height=5.2cm, width=15cm]{Fig_MQAmasks.png}
+\caption{MQA masks.}
+\label{Fig:MQAmasks}
+\end{figure}
+
+-- final projection. Concatenate heads $$(B,\verb#n_head#, T, \verb#head_dim#)\ra (B, T, \verb#n_head#, \verb#head_dim#)\ra (B, T, \verb#n_head#\times \verb#head_dim#) \ .$$ Followed by a linear layer $\verb#n_head#\times \verb#head_dim# \ra \verb#n_embd#$.
 \end{document}
