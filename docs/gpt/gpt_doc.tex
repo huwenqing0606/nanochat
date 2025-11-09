@@ -61,8 +61,10 @@
 \begin{document}
 
 \begin{center}
-\textbf{Note on \verb~gpt.py~ computational workflow.}
+\large{\textbf{Note on \verb~gpt.py~ computational workflow.}}
 \end{center}
+
+\noindent{\textbf{Computational Modules.}}
 
 $\bullet$ RMS norm: normalization of token's embedding vector $\boldx \in  \R^d$. This is different from transformer paper's LayerNorm.
 
@@ -126,4 +128,57 @@ Mask construction in multi-query-attention: Discuss the following cases
 \end{figure}
 
 -- final projection. Concatenate heads $$(B,\verb#n_head#, T, \verb#head_dim#)\ra (B, T, \verb#n_head#, \verb#head_dim#)\ra (B, T, \verb#n_head#\times \verb#head_dim#) \ .$$ Followed by a linear layer $\verb#n_head#\times \verb#head_dim# \ra \verb#n_embd#$.
+
+$\bullet$ MLP. Layer structure: \verb#n_embd# $\ra$ $4\times$ \verb#n_embd# $\stackrel{\text{ReLU}^2}{\longrightarrow}$ \verb#n_embd#. Activation function use $$\text{ReLU}^2(x)=\left\{\begin{array}{ll}
+x^2 & \text{ if } x\geq 0 \ , 
+\\
+0 & \text{ if } x<0 \ .
+\end{array}
+\right.$$
+
+$\bullet$ Block. Use residual connections $$x\mapsto x'=x+\text{Causal Self-Attention}\mapsto x'' = x'+\text{MLP} \ .$$
+
+\noindent{\textbf{The whole GPT workflow.}}
+
+$\bullet$ Network architecture: 
+
+-- \verb#wte#: word-to-embedding layer.
+
+-- \verb#h#: tramsformer block layer.
+
+-- \verb#lm_head#: language modeling head), head layer, embedding $\ra$ token logits.
+
+\begin{verbatim}
+Input ids
+   ↓
+Embedding (wte)
+   ↓
+Rotary Position Embeddings
+   ↓
+N × Transformer Blocks (Block)
+   ↓
+Norm
+   ↓
+Linear Output Head (lm_head)
+   ↓
+Logits / Loss
+\end{verbatim}
+
+$\bullet$ Initialize weights:
+
+-- linear layers: $\cN(0, \sm)$ where $\sm=\dfrac{1}{\sqrt{fan\_in}}\cdot \left(1\wedge \sqrt{\dfrac{fan\_out}{fan\_in}}\right)$
+
+-- embedding layers: $\cN(0,1)$
+
+-- \verb#lm_head# weights: 0
+
+-- \verb#c_proj# weights: 
+
+-- initialize the rotary embeddings:
+
+$\bullet$ Optimizers: AdamW for embedding layers and Muon for linear layers.
+
+$\bullet$ Naive autoregressive streaming inference: generate the next token through output logits.
+
+
 \end{document}
