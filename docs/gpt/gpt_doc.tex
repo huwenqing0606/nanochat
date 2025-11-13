@@ -142,11 +142,11 @@ $\bullet$ Block. Use residual connections $$x\mapsto x'=x+\text{Causal Self-Atte
 
 $\bullet$ Network architecture: 
 
--- \verb#wte#: word-to-embedding layer.
+-- \verb#wte#: word-to-embedding layer, \verb#vocab_size#$=50304$ is the amount of tokens, \verb#n_embd#$=768$ is the embedding dimension.
 
--- \verb#h#: tramsformer block layer.
+-- \verb#h#: transformer block layer, \verb#n_layer#$=12$ layers of Block.
 
--- \verb#lm_head#: language modeling head), head layer, embedding $\ra$ token logits.
+-- \verb#lm_head#: language modeling head, head layer, embedding $\ra$ token logits (\verb#vocab_size# tokens).
 
 \begin{verbatim}
 Input ids
@@ -155,7 +155,7 @@ Embedding (wte)
    ↓
 Norm
    ↓
-N × Transformer Blocks (Block) (N=12)
+n_layer × Transformer Blocks (Block) (n_layer=12)
    ↓
 Norm
    ↓
@@ -172,13 +172,17 @@ $\bullet$ Initialize weights:
 
 -- \verb#lm_head# weights: 0
 
--- \verb#c_proj# weights: 
+-- \verb#c_proj# weights: 0
 
--- initialize the rotary embeddings:
+-- initialize the rotary embeddings: \verb#_precompute_rotary_embeddings()#, use $\cos^{t,i}=\cos \left(\dfrac{t}{10000^{2i/D}}\right)$ and $\sin^{t,i}=\sin \left(\dfrac{t}{10000^{2i/D}}\right)$ as we indicated before, with \verb#rotary_seq_len#, i.e. running range of $t$, being $10$ times of the \verb#seq_len#$=1024$.
 
 $\bullet$ Optimizers: AdamW for embedding layers and Muon for linear layers.
 
-$\bullet$ Naive autoregressive streaming inference: generate the next token through output logits.
+$\bullet$ Computing the logits: \verb#lm_head# layer, softcap the logits using $15*$\verb#tanh#$\left(\dfrac{\text{logit}}{15}\right)$ (\verb#softcap#$=15$). Training mode use cross-entropy loss towards the \verb#target#.
+
+$\bullet$ Naive autoregressive streaming inference: generate the next token through output logits. Only first top $k$ logits are considered before softmax. Then softmax logits with control of randomness using \verb#tempreature#: when \verb#tempreature#$>0$, then $\dfrac{\text{logit}}{\text{tempreature}}$ as the new \verb#logit#, then softmax and random sampling; but when \verb#tempreature#$=0$, deterministically sample argmax of \verb#logit#.
+
+$\bullet$ Use of \verb#bfloat16# for GPU. 
 
 
 \end{document}
