@@ -8,3 +8,8 @@ eval_bundle/
 
 venv/
 target/
+
+*.aux
+*.log
+*.out
+*.synctex.gz

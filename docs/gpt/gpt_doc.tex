@@ -1,0 +1,188 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage{stmaryrd}
+\usepackage{graphicx}
+\usepackage{amsfonts}
+\usepackage{amsmath,amsthm}
+\usepackage{amssymb}
+\usepackage{mathrsfs}
+\usepackage{indentfirst}
+\usepackage{titlesec}
+\usepackage{caption2}
+\usepackage{color}
+\usepackage[normalem]{ulem}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{lineno}
+\numberwithin{equation}{section}
+
+\usepackage[english]{babel}
+\usepackage{cite}
+\usepackage{bbm}
+
+%\usepackage[colorlinks, linkcolor=blue]{hyperref}
+\usepackage[hypertexnames=false]{hyperref}
+%\usepackage[notref,notcite]{showkeys}
+
+\renewcommand{\baselinestretch}{1.2}
+
+\topmargin 0cm \oddsidemargin 0.66cm \evensidemargin 0.66cm
+\textwidth 14.66cm \textheight 22.23cm
+
+\parindent 5ex
+
+\providecommand{\bwd}{\leftarrow}
+\providecommand{\fwd}{\rightarrow}
+\renewcommand{\abstractname}{Abstract}
+\renewcommand{\figurename}{Fig.}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{problem}{Problem}
+\newtheorem{definition}{Definition}
+\newtheorem{condition}{Condition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{remark}{Remark}
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{corollary}{Corollary}[section]
+\newtheorem{example}{Example}[section]
+
+%\numberwithin{equation}{section}
+
+%below only needed in Ubuntu 16.04 when using TexStudio, should remove at WinEdt
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd{\ttlh@hang}{\parindent\z@}{\parindent\z@\leavevmode}{}{}
+\patchcmd{\ttlh@hang}{\noindent}{}{}{}
+\makeatother
+%above only needed in Ubuntu 16.04 when using TexStudio, should remove at WinEdt
+
+\usepackage{macros-Wenqing}
+
+\begin{document}
+
+\begin{center}
+\large{\textbf{Note on \verb~gpt.py~ computational workflow.}}
+\end{center}
+
+\noindent{\textbf{Computational Modules.}}
+
+$\bullet$ RMS norm: normalization of token's embedding vector $\boldx \in \R^d$. There are no learnable params in RMSNorm. This is different from transformer paper's LayerNorm.
+
+$$\text{RMSNorm}(\boldx)=\dfrac{\boldx}{\text{RMS}(\boldx)+\ve} \ , \ \text{RMS}(\boldx)=\sqrt{\sum\li_{i=1}^d x_i^2} \ , \ \boldx = (x_1,...,x_d) \ , \ \ve>0 \ .$$
+
+\
+
+$\bullet$ Rotary Positional Embedding (RoPE): positional embedding using $\sin$, $\cos$ positional tensors. This is different from transformer paper's Positional Embedding.
+
+Input $x$ (which is the $Q,K$ in causal attention module) with shape $(B, T, H, D)$ where  $B=$batch size, $T=$sequence length, $H=$number of heads in multi-head attention, $D=$dimension of each head (must be even). Let $\sin=(\sin^{t,i})_{0\leq t \leq T-1, 0\leq i\leq D/2}$, $\cos=(\cos^{t,i})_{0\leq t \leq T-1, 0\leq i\leq D/2}$ be tensors each with shape $(1,T,1,D/2)$. Then for each batch $b$, each index $t\in \{0,...,T-1\}$, each head $h$, RoPE does the following:
+$$(x^{b,t,h,0},...,x^{b,t,h,D-1}) \ra \left\{\begin{array}{ll}
+\cos^{t,i}x^{b,t,h,i} + \sin^{t,i}x^{b,t,h,i+D/2} & \text{ for } 0\leq i \leq D/2-1 \ ,
+\\
+-\sin^{t,i-D/2}x^{b,t,h,i-D/2} + \cos^{t,i-D/2}x^{b,t,h,i} & \text{ for } D/2\leq i \leq D-1 \ .
+\end{array}\right.$$
+Position information, originally in $t$, is encoded in such rotation via $\cos, \sin$. Usually we take $\cos^{t,i}=\cos \left(\dfrac{t}{10000^{2i/D}}\right)$ and $\sin^{t,i}=\sin \left(\dfrac{t}{10000^{2i/D}}\right)$.
+
+\
+
+$\bullet$ Causal Self-Attention. The self-attention module with specific causal mask construction.
+
+-- number of heads $\verb#n_head#$ $\%$ number of kv heads $\verb#n_kv_head#$ $=0$. 
+
+-- self-attention. Input $x$ has shape $(B,T,\verb#_#)$, which stands for the current forward pass. Then $Q, K, V$ are from input $x$, i.e., $Q=W_Q^T X$ etc. They are re-shaped into shape $(B,T, \verb#n_head#, \verb#head_dim#)$ for $Q$ and $(B,T, \verb#n_kv_head#, \verb#head_dim#)$ for $K, V$, respectively. 
+Then apply RoPE to $Q,K$, apply RMSNorm to $Q,K$, finally apply $(1,2)$ transpose $(B,T,H,D)\ra (B,H,T,D)$ to $Q,K,V$, i.e., to process each attention head to the full batch (head-wise parallelization);
+
+-- kv-cache and multi-query-attention. $T$ in $(B,H,T,D)$ stands for the number of queries. For $Q$, use number of queries in this forward pass $=T_q$; for $K,V$, after kv-cache, use number of queries in the cache $+$ current forward pass $=T_q+(T_k)_{\text{prev}}=T_k$.
+
+PyTorch 2.0's \verb`scaled_product_attention`: 
+
+\begin{verbatim}
+def scaled_dot_product_attention(
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    attn_mask: Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    scale: float | None = None,
+    enable_gqa: bool = False,
+) -> Tensor: ...
+\end{verbatim}
+
+Multi-Query-Attention (Group-Query-Attention, gqa): 
+
+\verb#enable_gqa = self.n_head != self.n_kv_head#:
+multiple query heads use the same key/value head, or in other words duplicately use key/value head for a chunk of query heads. This saves computation. Example: \verb#n_head#$=16$, \verb#n_kv_head#$=4$, then each group of $4$ query heads share the same kv head, or the same kv head repeatedly used $4$ times for each chunk of $4$ query heads. 
+
+Mask construction in multi-query-attention: Discuss the following cases
+\begin{itemize}
+\item[(1)] Inference with no increment, i.e. infer the whole sequence at once ($T_q=T_k$) or training (kv cache is empty): Auto regressive case. Each query only attends keys/values before it. Use standard causal mask. See Figure \ref{Fig:MQAmasks} left. 
+\item[(2)] $T_q=1$, inference with single query in this forward pass. Each query attends all the keys/values in the cache. No mask needed. See Figure \ref{Fig:MQAmasks} middle.
+\item[(3)] Not (1) or (2): $1<T_q<T_k$. Inference with a chunk of $T_q$ queries in this forward pass. Each query attends all the keys/values in the old kv cache $(T_k)_\text{prev}=T_k-T_q$, but for the newly added $T_q$ items of kv, i.e. within the chunk we use causal attention so that each query only attends keys/values before it. See Figure \ref{Fig:MQAmasks} right.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[height=5.2cm, width=15cm]{Fig_MQAmasks.png}
+\caption{MQA masks.}
+\label{Fig:MQAmasks}
+\end{figure}
+
+-- final projection. Concatenate heads $$(B,\verb#n_head#, T, \verb#head_dim#)\ra (B, T, \verb#n_head#, \verb#head_dim#)\ra (B, T, \verb#n_head#\times \verb#head_dim#) \ .$$ Followed by a linear layer $\verb#n_head#\times \verb#head_dim# \ra \verb#n_embd#$.
+
+$\bullet$ MLP. Layer structure: \verb#n_embd# $\ra$ $4\times$ \verb#n_embd# $\stackrel{\text{ReLU}^2}{\longrightarrow}$ \verb#n_embd#. Activation function use $$\text{ReLU}^2(x)=\left\{\begin{array}{ll}
+x^2 & \text{ if } x\geq 0 \ , 
+\\
+0 & \text{ if } x<0 \ .
+\end{array}
+\right.$$
+
+$\bullet$ Block. Use residual connections $$x\mapsto x'=x+\text{Causal Self-Attention}\mapsto x'' = x'+\text{MLP} \ .$$
+
+\noindent{\textbf{The whole GPT workflow.}}
+
+$\bullet$ Network architecture: 
+
+-- \verb#wte#: word-to-embedding layer, \verb#vocab_size#$=50304$ is the amount of tokens, \verb#n_embd#$=768$ is the embedding dimension.
+
+-- \verb#h#: transformer block layer, \verb#n_layer#$=12$ layers of Block.
+
+-- \verb#lm_head#: language modeling head, head layer, embedding $\ra$ token logits (\verb#vocab_size# tokens).
+
+\begin{verbatim}
+Input ids
+   ↓
+Embedding (wte)
+   ↓
+Norm
+   ↓
+n_layer × Transformer Blocks (Block) (n_layer=12)
+   ↓
+Norm
+   ↓
+Linear Output Head (lm_head)
+   ↓
+Logits / Loss
+\end{verbatim}
+
+$\bullet$ Initialize weights:
+
+-- linear layers: $\cN(0, \sm)$ where $\sm=\dfrac{1}{\sqrt{fan\_in}}\cdot \left(1\wedge \sqrt{\dfrac{fan\_out}{fan\_in}}\right)$
+
+-- embedding layers: $\cN(0,1)$
+
+-- \verb#lm_head# weights: 0
+
+-- \verb#c_proj# weights: 0
+
+-- initialize the rotary embeddings: \verb#_precompute_rotary_embeddings()#, use $\cos^{t,i}=\cos \left(\dfrac{t}{10000^{2i/D}}\right)$ and $\sin^{t,i}=\sin \left(\dfrac{t}{10000^{2i/D}}\right)$ as we indicated before, with \verb#rotary_seq_len#, i.e. running range of $t$, being $10$ times of the \verb#seq_len#$=1024$.
+
+$\bullet$ Optimizers: AdamW for embedding layers and Muon for linear layers.
+
+$\bullet$ Computing the logits: \verb#lm_head# layer, softcap the logits using $15*$\verb#tanh#$\left(\dfrac{\text{logit}}{15}\right)$ (\verb#softcap#$=15$). Training mode use cross-entropy loss towards the \verb#target#.
+
+$\bullet$ Naive autoregressive streaming inference: generate the next token through output logits. Only first top $k$ logits are considered before softmax. Then softmax logits with control of randomness using \verb#tempreature#: when \verb#tempreature#$>0$, then $\dfrac{\text{logit}}{\text{tempreature}}$ as the new \verb#logit#, then softmax and random sampling; but when \verb#tempreature#$=0$, deterministically sample argmax of \verb#logit#.
+
+$\bullet$ Use of \verb#bfloat16# for GPU. 
+
+
+\end{document}
